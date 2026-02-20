@@ -1,0 +1,40 @@
+{
+  "name": "plannerapp",
+  "version": "1.0.0",
+  "description": "Meu Planner de Estudos Personalizado",
+  "main": "main.js",
+  "author": "Alexandre Lintz",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.alexandre.planner",
+    "productName": "Meu Planner",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "icon": "icon.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Meu Planner"
+    },
+    "files": [
+      "**/*",
+      "!dist/*"
+    ]
+  },
+  "keywords": [],
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^40.6.0",
+    "electron-builder": "^26.8.1"
+  }
+}

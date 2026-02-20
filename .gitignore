@@ -1,0 +1,22 @@
+# Dependências (Pastas muito pesadas que não devem subir)
+node_modules/
+
+# Pastas de Build (O executável final que o electron-builder gera)
+dist/
+
+# Ficheiros do Sistema Operativo
+Thumbs.db
+.DS_Store
+
+# Ficheiros de log do NPM
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Configurações de editores (Opcional, mas recomendado)
+.vscode/
+.idea/
+
+# Ficheiros temporários e de cache
+.eslintcache
+.parcel-cache
