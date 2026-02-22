@@ -7,7 +7,7 @@ const DAYS = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SÁB"];
 let appData = JSON.parse(localStorage.getItem("studyPlannerV5")) || {
   name: "Alexandre",
   avatar: "",
-  theme: "dark", // NOVO: Armazena o Tema Escuro ou Rosa
+  theme: "dark",
   baseSchedule: Array(7)
     .fill(null)
     .map(() => []),
@@ -21,6 +21,7 @@ let currentDayIdx = new Date().getDay();
 let editingBlockRef = null;
 let isCreatingNew = false;
 
+// --- FUNÇÕES GERAIS ---
 function closeApp() {
   window.close();
 }
@@ -62,6 +63,7 @@ function checkNewDay() {
   const todayStr = new Date().toDateString();
   const todayIdx = new Date().getDay();
   if (appData.lastDate !== todayStr) {
+    currentDayIdx = todayIdx;
     appData.todayBlocks = JSON.parse(
       JSON.stringify(appData.baseSchedule[todayIdx]),
     );
@@ -95,6 +97,7 @@ function logHistory(block, status) {
   saveData();
 }
 
+// --- CONTROLE DE ATIVIDADES ---
 function startActivity() {
   const nowDec =
     new Date().getHours() +
@@ -179,7 +182,7 @@ function togglePause() {
       (b) => b.id === appData.pauseState.blockId,
     );
     if (block) {
-      block.duration += elapsedHours;
+      block.start += elapsedHours; // Correção: Empurra o início para frente
       cascadeBlocks(appData.todayBlocks);
     }
     appData.pauseState = { isPaused: false, startTime: null, blockId: null };
@@ -249,7 +252,6 @@ function updateTimer() {
   const pauseArea = document.getElementById("pause-action-area");
   const delayWarn = document.getElementById("delay-warning");
 
-  // LÓGICA DO TEMPO LIVRE ATUALIZADA (CONTAGEM REGRESSIVA)
   if (!active) {
     elLabel.innerText = "AGORA";
     elName.innerText = "Tempo Livre";
@@ -259,7 +261,6 @@ function updateTimer() {
     startArea.style.display = "none";
     pauseArea.style.display = "none";
 
-    // Procura a PRÓXIMA atividade do dia que ainda vai acontecer
     const nextBlock = appData.todayBlocks.find(
       (b) => b.status === "pending" && b.start > nowDec,
     );
@@ -380,9 +381,11 @@ function formatHMS(s) {
   const sec = Math.floor(s % 60);
   return `${pad(h)}:${pad(m)}:${pad(sec)}`;
 }
+
 function pad(n) {
   return n < 10 ? "0" + n : n;
 }
+
 setInterval(updateTimer, 1000);
 
 // --- RELATÓRIOS ---
@@ -392,6 +395,7 @@ function openDashboard() {
   let missedCount = 0;
   const listEl = document.getElementById("history-list");
   listEl.innerHTML = "";
+
   [...appData.history].reverse().forEach((item) => {
     if (item.type !== "study") return;
     if (item.status === "completed") {
@@ -405,12 +409,14 @@ function openDashboard() {
     div.innerHTML = `<div><div class="hist-name">${item.name}</div><div class="hist-time">${item.date} • ${Math.round(item.duration * 60)} min</div></div><div class="hist-status">${item.status === "completed" ? "CONCLUÍDO" : "FALTOU"}</div>`;
     listEl.appendChild(div);
   });
+
   document.getElementById("stat-hours").innerText =
     Math.round(totalStudyHours) + "h";
   document.getElementById("stat-completed").innerText = completedCount;
   document.getElementById("stat-missed").innerText = missedCount;
   document.getElementById("modal-dashboard").style.display = "flex";
 }
+
 async function clearHistory() {
   const confirmed = await showCustomConfirm(
     "Apagar Histórico",
@@ -430,9 +436,9 @@ function openSchedule() {
   renderTabs();
   renderGrid();
 }
+
 function closeModal(id) {
   document.getElementById(id).style.display = "none";
-  // Remove o fundo apagado de onde foi aberto
   if (id === "modal-edit-block") {
     document.getElementById("schedule-card").classList.remove("dimmed");
     isCreatingNew = false;
@@ -490,10 +496,12 @@ function decToTimeStr(dec) {
   const m = Math.round((dec - h) * 60);
   return `${pad(h)}:${pad(m)}`;
 }
+
 function timeStrToDec(str) {
   const [h, m] = str.split(":").map(Number);
   return h + m / 60;
 }
+
 function showError(msg) {
   const e = document.getElementById("edit-error");
   if (e) {
@@ -501,6 +509,7 @@ function showError(msg) {
     e.style.display = "block";
   }
 }
+
 function hideError() {
   const e = document.getElementById("edit-error");
   if (e) e.style.display = "none";
@@ -542,6 +551,7 @@ function saveBlockEdit() {
   const startDec = timeStrToDec(document.getElementById("edit-start").value),
     endDec = timeStrToDec(document.getElementById("edit-end").value);
   const duration = endDec - startDec;
+
   if (
     !document.getElementById("edit-start").value ||
     !document.getElementById("edit-end").value
@@ -550,15 +560,21 @@ function saveBlockEdit() {
   if (duration <= 0) return showError("O horário final deve ser maior!");
   if (startDec < START_HOUR)
     return showError(`O início não pode ser antes das ${START_HOUR}:00.`);
+
   const hasCollision = appData.baseSchedule[currentDayIdx].some((b, idx) => {
     if (!isCreatingNew && idx === editingBlockRef.idx) return false;
     return startDec < b.start + b.duration && endDec > b.start;
   });
+
   if (hasCollision)
     return showError("⚠️ Este horário já está ocupado na agenda!");
+
+  let newId = null;
+
   if (isCreatingNew) {
+    newId = Math.random().toString(36).substr(2, 9);
     appData.baseSchedule[currentDayIdx].push({
-      id: Math.random().toString(36).substr(2, 9),
+      id: newId,
       name,
       type,
       color,
@@ -575,14 +591,44 @@ function saveBlockEdit() {
       duration,
     });
   }
+
   cascadeBlocks(appData.baseSchedule[currentDayIdx]);
+
+  // Sincroniza o bloco alterado ou recém criado no dia atual
   if (currentDayIdx === new Date().getDay()) {
-    appData.todayBlocks = JSON.parse(
-      JSON.stringify(appData.baseSchedule[currentDayIdx]),
-    );
-    appData.todayBlocks.forEach((b) => (b.status = "pending"));
-    appData.pauseState = { isPaused: false, startTime: null, blockId: null };
+    if (newId) {
+      const newBaseBlock = appData.baseSchedule[currentDayIdx].find(
+        (b) => b.id === newId,
+      );
+      const todayClone = JSON.parse(JSON.stringify(newBaseBlock));
+      const nowDec =
+        new Date().getHours() +
+        new Date().getMinutes() / 60 +
+        new Date().getSeconds() / 3600;
+
+      if (nowDec >= todayClone.start + todayClone.duration) {
+        todayClone.status = "missed";
+      } else {
+        todayClone.status = "pending";
+      }
+      appData.todayBlocks.push(todayClone);
+    } else {
+      const todayBlock = appData.todayBlocks.find(
+        (b) => b.id === editingBlockRef.block.id,
+      );
+      if (todayBlock) {
+        Object.assign(todayBlock, {
+          name,
+          type,
+          color,
+          start: startDec,
+          duration,
+        });
+      }
+    }
+    cascadeBlocks(appData.todayBlocks);
   }
+
   saveData();
   closeModal("modal-edit-block");
   renderGrid();
@@ -594,14 +640,23 @@ function deleteBlock() {
     return;
   }
   if (!editingBlockRef) return;
+
+  const deletedId = editingBlockRef.block.id;
   appData.baseSchedule[currentDayIdx].splice(editingBlockRef.idx, 1);
+
+  // Remove apenas o bloco afetado no dia atual
   if (currentDayIdx === new Date().getDay()) {
-    appData.todayBlocks = JSON.parse(
-      JSON.stringify(appData.baseSchedule[currentDayIdx]),
-    );
-    appData.todayBlocks.forEach((b) => (b.status = "pending"));
-    appData.pauseState = { isPaused: false, startTime: null, blockId: null };
+    const todayIdx = appData.todayBlocks.findIndex((b) => b.id === deletedId);
+    if (todayIdx !== -1) {
+      appData.todayBlocks.splice(todayIdx, 1);
+    }
+    cascadeBlocks(appData.todayBlocks);
+
+    if (appData.pauseState.blockId === deletedId) {
+      appData.pauseState = { isPaused: false, startTime: null, blockId: null };
+    }
   }
+
   saveData();
   closeModal("modal-edit-block");
   renderGrid();
@@ -609,12 +664,12 @@ function deleteBlock() {
 
 // --- PERFIL E TEMA ---
 function renderProfile() {
-  // Aplica o tema na raiz da página
   document.documentElement.setAttribute("data-theme", appData.theme || "dark");
 
   let safeName = appData.name || "Alexandre";
   document.getElementById("display-name").innerText = safeName.substring(0, 10);
   const avatarEl = document.getElementById("avatar-img");
+
   if (appData.avatar && appData.avatar.trim() !== "") {
     avatarEl.style.backgroundImage = `url('${appData.avatar}')`;
     avatarEl.innerText = "";
@@ -629,9 +684,7 @@ function renderProfile() {
 }
 
 function openProfileModal() {
-  // EFEITO DIM NO CARD PRINCIPAL
   document.getElementById("main-app-card").classList.add("dimmed");
-
   document.getElementById("profile-name-input").value = appData.name;
   document.getElementById("profile-img-input").value = appData.avatar;
   document.getElementById("profile-theme-input").value =
@@ -654,3 +707,14 @@ function saveData() {
 
 renderProfile();
 updateTimer();
+
+window.addEventListener("beforeunload", () => {
+  const active = appData.todayBlocks.find((b) => b.status === "running");
+
+  if (active && !appData.pauseState.isPaused) {
+    appData.pauseState.isPaused = true;
+    appData.pauseState.startTime = Date.now();
+    appData.pauseState.blockId = active.id;
+    saveData();
+  }
+});

@@ -1,6 +1,6 @@
 {
   "name": "plannerapp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Meu Planner de Estudos Personalizado",
   "main": "main.js",
   "author": "Alexandre Lintz",
