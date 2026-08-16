@@ -1,6 +1,6 @@
 {
   "name": "plannerapp",
-  "version": "1.0.1",
+  "version": "1.0.4",
   "description": "Meu Planner de Estudos Personalizado",
   "main": "main.js",
   "author": "Alexandre Lintz",
@@ -31,7 +31,7 @@
     ]
   },
   "keywords": [],
-  "license": "ISC",
+  "license": "MIT",
   "type": "commonjs",
   "devDependencies": {
     "electron": "^40.6.0",

@@ -1,3 +1,51 @@
+const { ipcRenderer } = require("electron");
+
+// --- SINTETIZADOR DE ÁUDIO (INTELIGENTE) ---
+function playAlertSound(type = "start") {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    oscillator.type = "sine";
+
+    const now = audioCtx.currentTime;
+
+    if (type === "start") {
+      oscillator.frequency.setValueAtTime(523.25, now);
+      oscillator.frequency.setValueAtTime(659.25, now + 0.15);
+      oscillator.frequency.setValueAtTime(783.99, now + 0.3);
+
+      gainNode.gain.setValueAtTime(0.2, now);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, now + 1.0);
+      oscillator.start(now);
+      oscillator.stop(now + 1.0);
+    } else if (type === "end") {
+      oscillator.frequency.setValueAtTime(783.99, now);
+      oscillator.frequency.setValueAtTime(659.25, now + 0.2);
+      oscillator.frequency.setValueAtTime(523.25, now + 0.4);
+
+      gainNode.gain.setValueAtTime(0.2, now);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+      oscillator.start(now);
+      oscillator.stop(now + 1.2);
+    } else if (type === "transition") {
+      oscillator.frequency.setValueAtTime(523.25, now);
+      oscillator.frequency.setValueAtTime(783.99, now + 0.15);
+      oscillator.frequency.setValueAtTime(1046.5, now + 0.3);
+
+      gainNode.gain.setValueAtTime(0.25, now);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, now + 1.5);
+      oscillator.start(now);
+      oscillator.stop(now + 1.5);
+    }
+  } catch (e) {
+    console.log("Erro de áudio", e);
+  }
+}
+
 // --- CONSTANTES ---
 const PX_PER_HOUR = 60;
 const START_HOUR = 6;
@@ -17,13 +65,22 @@ let appData = JSON.parse(localStorage.getItem("studyPlannerV5")) || {
   pauseState: { isPaused: false, startTime: null, blockId: null },
 };
 
+// Garante que dados antigos recebam a memória de originalStart
+appData.todayBlocks.forEach((b) => {
+  if (b.originalStart === undefined) b.originalStart = b.start;
+});
+
 let currentDayIdx = new Date().getDay();
 let editingBlockRef = null;
 let isCreatingNew = false;
 
 // --- FUNÇÕES GERAIS ---
 function closeApp() {
-  window.close();
+  ipcRenderer.send("close-app");
+}
+
+function minimizeApp() {
+  ipcRenderer.send("minimize-app");
 }
 
 function showCustomConfirm(title, message, isDanger = true) {
@@ -67,7 +124,22 @@ function checkNewDay() {
     appData.todayBlocks = JSON.parse(
       JSON.stringify(appData.baseSchedule[todayIdx]),
     );
-    appData.todayBlocks.forEach((b) => (b.status = "pending"));
+
+    const nowDec =
+      new Date().getHours() +
+      new Date().getMinutes() / 60 +
+      new Date().getSeconds() / 3600;
+
+    appData.todayBlocks.forEach((b) => {
+      b.originalStart = b.start; // Grava o horário original
+      if (nowDec >= b.start + b.duration) {
+        b.status = "missed";
+      } else {
+        b.status = "pending";
+      }
+      b.notifiedStart = false;
+      b.notifiedEnd = false;
+    });
     appData.lastDate = todayStr;
     appData.pauseState = { isPaused: false, startTime: null, blockId: null };
     saveData();
@@ -75,13 +147,34 @@ function checkNewDay() {
 }
 
 function cascadeBlocks(blocksArray) {
+  // 1. EFEITO ELÁSTICO: Restaura todas as tarefas pendentes pro horário original primeiro
+  blocksArray.forEach((b) => {
+    if (b.status === "pending" && b.originalStart !== undefined) {
+      b.start = b.originalStart;
+    }
+  });
+
+  // 2. Ordena cronologicamente
   blocksArray.sort((a, b) => a.start - b.start);
-  for (let i = 1; i < blocksArray.length; i++) {
-    const prev = blocksArray[i - 1];
+
+  // 3. EFEITO CASCATA INTELIGENTE
+  let currentEndTime = 0; // Rastreador de tempo ocupado
+
+  for (let i = 0; i < blocksArray.length; i++) {
     const curr = blocksArray[i];
-    const prevEnd = prev.start + prev.duration;
-    if (curr.status !== "completed" && curr.status !== "missed") {
-      if (curr.start < prevEnd) curr.start = prevEnd;
+
+    // Ignora tarefas puladas/faltas
+    if (curr.status !== "missed") {
+      // Se a tarefa for PENDENTE e estiver batendo no tempo já ocupado, empurra pra frente!
+      if (curr.status === "pending" && curr.start < currentEndTime) {
+        curr.start = currentEndTime;
+      }
+
+      // Atualiza onde o tempo da agenda está ocupado atualmente
+      const actualEnd = curr.start + curr.duration;
+      if (actualEnd > currentEndTime) {
+        currentEndTime = actualEnd;
+      }
     }
   }
 }
@@ -106,18 +199,25 @@ function startActivity() {
   let block = appData.todayBlocks.find(
     (b) => b.status === "pending" && nowDec >= b.start,
   );
+
   if (block) {
     const delay = nowDec - block.start;
+
+    // CORREÇÃO: Avisa que começou ANTES de chamar a cascata!
+    block.status = "running";
+
+    // Se estiver atrasado, empurra a tarefa para o horário atual
     if (delay > 0) {
       block.start = nowDec;
-      cascadeBlocks(appData.todayBlocks);
     }
-    block.status = "running";
+
+    // Agora o elástico respeita o seu atraso e empurra só as próximas matérias
+    cascadeBlocks(appData.todayBlocks);
+
     saveData();
     updateTimer();
   }
 }
-
 async function skipActivity() {
   const nowDec =
     new Date().getHours() +
@@ -134,6 +234,7 @@ async function skipActivity() {
     if (confirmed) {
       block.status = "missed";
       if (block.type === "study") logHistory(block, "missed");
+      cascadeBlocks(appData.todayBlocks);
       saveData();
       updateTimer();
     }
@@ -141,38 +242,47 @@ async function skipActivity() {
 }
 
 async function endActivityEarly() {
-  const confirmed = await showCustomConfirm(
-    "Encerrar Mais Cedo",
-    "Deseja encerrar essa atividade agora? O tempo estudado até aqui será salvo.",
-  );
-  if (!confirmed) return;
-
   let active = appData.pauseState.isPaused
     ? appData.todayBlocks.find((b) => b.id === appData.pauseState.blockId)
     : appData.todayBlocks.find((b) => b.status === "running");
 
-  if (active) {
-    let endTimeDec;
-    if (appData.pauseState.isPaused) {
-      const pauseStart = new Date(appData.pauseState.startTime);
-      endTimeDec =
-        pauseStart.getHours() +
-        pauseStart.getMinutes() / 60 +
-        pauseStart.getSeconds() / 3600;
-      appData.pauseState = { isPaused: false, startTime: null, blockId: null };
-    } else {
-      const now = new Date();
-      endTimeDec =
-        now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
-    }
+  if (!active) return;
 
-    const actualDuration = endTimeDec - active.start;
-    active.duration = actualDuration > 0 ? actualDuration : 0.01;
-    active.status = "completed";
-    if (active.type === "study") logHistory(active, "completed");
-    saveData();
-    updateTimer();
+  const msg =
+    active.type === "study"
+      ? "Deseja encerrar essa atividade agora? O tempo estudado até aqui será salvo."
+      : "Deseja pular o resto desta pausa e adiantar a agenda?";
+
+  const confirmed = await showCustomConfirm(
+    active.type === "study" ? "Encerrar Mais Cedo" : "Pular Pausa",
+    msg,
+  );
+
+  if (!confirmed) return;
+
+  let endTimeDec;
+  if (appData.pauseState.isPaused) {
+    const pauseStart = new Date(appData.pauseState.startTime);
+    endTimeDec =
+      pauseStart.getHours() +
+      pauseStart.getMinutes() / 60 +
+      pauseStart.getSeconds() / 3600;
+    appData.pauseState = { isPaused: false, startTime: null, blockId: null };
+  } else {
+    const now = new Date();
+    endTimeDec =
+      now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
   }
+
+  const actualDuration = endTimeDec - active.start;
+  active.duration = actualDuration > 0 ? actualDuration : 0.01;
+  active.status = "completed";
+
+  if (active.type === "study") logHistory(active, "completed");
+
+  cascadeBlocks(appData.todayBlocks);
+  saveData();
+  updateTimer();
 }
 
 function togglePause() {
@@ -182,7 +292,7 @@ function togglePause() {
       (b) => b.id === appData.pauseState.blockId,
     );
     if (block) {
-      block.start += elapsedHours; // Correção: Empurra o início para frente
+      block.start += elapsedHours;
       cascadeBlocks(appData.todayBlocks);
     }
     appData.pauseState = { isPaused: false, startTime: null, blockId: null };
@@ -205,10 +315,34 @@ function updateTimer() {
   const nowDec =
     now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
 
+  // --- LÓGICA DE ALARMES SONOROS AUTOMÁTICOS ---
+  let soundType = null;
+
+  appData.todayBlocks.forEach((b) => {
+    const timeSinceStart = (nowDec - b.start) * 3600;
+    const timeSinceEnd = (nowDec - (b.start + b.duration)) * 3600;
+
+    if (timeSinceStart >= 0 && timeSinceStart <= 5 && !b.notifiedStart) {
+      b.notifiedStart = true;
+      soundType = soundType === "end" ? "transition" : "start";
+    }
+
+    if (timeSinceEnd >= 0 && timeSinceEnd <= 5 && !b.notifiedEnd) {
+      b.notifiedEnd = true;
+      soundType = soundType === "start" ? "transition" : "end";
+    }
+  });
+
+  if (soundType) {
+    playAlertSound(soundType);
+    saveData();
+  }
+
   appData.todayBlocks.forEach((b) => {
     if (b.status === "pending" && nowDec >= b.start + b.duration) {
       b.status = "missed";
       if (b.type === "study") logHistory(b, "missed");
+      cascadeBlocks(appData.todayBlocks);
       saveData();
     }
   });
@@ -218,6 +352,7 @@ function updateTimer() {
       if (nowDec >= b.start + b.duration) {
         b.status = "completed";
         if (b.type === "study") logHistory(b, "completed");
+        cascadeBlocks(appData.todayBlocks);
         saveData();
       }
     }
@@ -231,7 +366,13 @@ function updateTimer() {
     active = appData.todayBlocks.find(
       (b) => b.id === appData.pauseState.blockId,
     );
-    isCurrentlyPaused = true;
+    if (active && active.type === "pause") {
+      appData.pauseState = { isPaused: false, startTime: null, blockId: null };
+      saveData();
+      isCurrentlyPaused = false;
+    } else {
+      isCurrentlyPaused = true;
+    }
   }
 
   if (!active) active = appData.todayBlocks.find((b) => b.status === "running");
@@ -300,7 +441,13 @@ function updateTimer() {
       saveData();
     }
   } else {
-    elLabel.innerText = isCurrentlyPaused ? "EM PAUSA" : "EM ANDAMENTO";
+    // --- TEXTOS INTELIGENTES LÁ NO TOPO ---
+    if (active.type === "pause") {
+      elLabel.innerText = "INTERVALO / DESCANSO";
+    } else {
+      elLabel.innerText = isCurrentlyPaused ? "EM PAUSA" : "EM ANDAMENTO";
+    }
+
     elLabel.style.color = "var(--text-muted)";
     elName.innerText = active.name;
     let activeColor =
@@ -315,8 +462,13 @@ function updateTimer() {
     const endM = Math.floor((active.start + active.duration - endH) * 60);
     elEndTime.innerText = `Término previsto: ${pad(endH)}:${pad(endM)}`;
 
+    // BOTÕES E CRONÔMETRO
+    pauseArea.style.display = "flex";
+
     if (active.type === "study") {
-      pauseArea.style.display = "flex";
+      document.getElementById("btn-pause").style.display = "block";
+      document.getElementById("btn-end-early").innerText = "⏹ Encerrar Agora";
+
       if (isCurrentlyPaused) {
         const btnPause = document.getElementById("btn-pause");
         const pauseCounter = document.getElementById("pause-counter");
@@ -365,10 +517,18 @@ function updateTimer() {
         elBar.style.boxShadow = `0 0 10px ${activeColor}`;
       }
     } else {
-      pauseArea.style.display = "none";
-      elTimer.innerText = "Em Pausa";
+      // --- CRONÔMETRO DECRESCENTE APARECENDO NA PAUSA ---
+      document.getElementById("btn-pause").style.display = "none";
+      document.getElementById("btn-end-early").innerText = "⏭ Pular Pausa";
+      document.getElementById("pause-counter").style.display = "none";
+
+      const diffSecs = (active.start + active.duration - nowDec) * 3600;
+      elTimer.innerText = formatHMS(diffSecs > 0 ? diffSecs : 0);
       elTimer.style.color = "var(--text-main)";
-      elBar.style.width = "100%";
+
+      const pct =
+        ((active.duration * 3600 - diffSecs) / (active.duration * 3600)) * 100;
+      elBar.style.width = `${pct}%`;
       elBar.style.background = activeColor;
       elBar.style.boxShadow = `0 0 10px ${activeColor}`;
     }
@@ -526,6 +686,11 @@ function openBlockEditor(block, idx) {
   document.getElementById("edit-end").value = decToTimeStr(
     block.start + block.duration,
   );
+
+  document.querySelectorAll(".day-checkbox input").forEach((cb) => {
+    cb.checked = parseInt(cb.value) === currentDayIdx;
+  });
+
   document.getElementById("schedule-card").classList.add("dimmed");
   document.getElementById("modal-edit-block").style.display = "flex";
 }
@@ -539,6 +704,11 @@ function addNewBlock() {
   document.getElementById("edit-color").value = "#bb86fc";
   document.getElementById("edit-start").value = "09:00";
   document.getElementById("edit-end").value = "10:00";
+
+  document.querySelectorAll(".day-checkbox input").forEach((cb) => {
+    cb.checked = parseInt(cb.value) === currentDayIdx;
+  });
+
   document.getElementById("schedule-card").classList.add("dimmed");
   document.getElementById("modal-edit-block").style.display = "flex";
 }
@@ -561,71 +731,110 @@ function saveBlockEdit() {
   if (startDec < START_HOUR)
     return showError(`O início não pode ser antes das ${START_HOUR}:00.`);
 
-  const hasCollision = appData.baseSchedule[currentDayIdx].some((b, idx) => {
-    if (!isCreatingNew && idx === editingBlockRef.idx) return false;
-    return startDec < b.start + b.duration && endDec > b.start;
-  });
+  const selectedDaysInputs = document.querySelectorAll(
+    ".day-checkbox input:checked",
+  );
+  const selectedDays = Array.from(selectedDaysInputs).map((cb) =>
+    parseInt(cb.value),
+  );
 
-  if (hasCollision)
-    return showError("⚠️ Este horário já está ocupado na agenda!");
+  if (selectedDays.length === 0)
+    return showError("Selecione pelo menos um dia da semana.");
 
-  let newId = null;
-
-  if (isCreatingNew) {
-    newId = Math.random().toString(36).substr(2, 9);
-    appData.baseSchedule[currentDayIdx].push({
-      id: newId,
-      name,
-      type,
-      color,
-      start: startDec,
-      duration,
+  let hasCollision = false;
+  for (let d of selectedDays) {
+    const collision = appData.baseSchedule[d].some((b, idx) => {
+      if (!isCreatingNew && d === currentDayIdx && idx === editingBlockRef.idx)
+        return false;
+      return startDec < b.start + b.duration && endDec > b.start;
     });
-    isCreatingNew = false;
-  } else {
-    Object.assign(editingBlockRef.block, {
-      name,
-      type,
-      color,
-      start: startDec,
-      duration,
-    });
+    if (collision) {
+      hasCollision = true;
+      break;
+    }
   }
 
-  cascadeBlocks(appData.baseSchedule[currentDayIdx]);
+  if (hasCollision)
+    return showError(
+      "⚠️ Este horário já está ocupado em um dos dias selecionados!",
+    );
 
-  // Sincroniza o bloco alterado ou recém criado no dia atual
-  if (currentDayIdx === new Date().getDay()) {
-    if (newId) {
-      const newBaseBlock = appData.baseSchedule[currentDayIdx].find(
-        (b) => b.id === newId,
-      );
-      const todayClone = JSON.parse(JSON.stringify(newBaseBlock));
-      const nowDec =
-        new Date().getHours() +
-        new Date().getMinutes() / 60 +
-        new Date().getSeconds() / 3600;
+  if (!isCreatingNew && !selectedDays.includes(currentDayIdx)) {
+    const deletedId = editingBlockRef.block.id;
+    appData.baseSchedule[currentDayIdx].splice(editingBlockRef.idx, 1);
+    if (currentDayIdx === new Date().getDay()) {
+      const todayIdx = appData.todayBlocks.findIndex((b) => b.id === deletedId);
+      if (todayIdx !== -1) appData.todayBlocks.splice(todayIdx, 1);
+    }
+  }
 
-      if (nowDec >= todayClone.start + todayClone.duration) {
-        todayClone.status = "missed";
-      } else {
-        todayClone.status = "pending";
+  selectedDays.forEach((d) => {
+    const isToday = d === new Date().getDay();
+
+    if (!isCreatingNew && d === currentDayIdx) {
+      Object.assign(editingBlockRef.block, {
+        name,
+        type,
+        color,
+        start: startDec,
+        originalStart: startDec,
+        duration,
+      });
+      if (isToday) {
+        const todayBlock = appData.todayBlocks.find(
+          (b) => b.id === editingBlockRef.block.id,
+        );
+        if (todayBlock)
+          Object.assign(todayBlock, {
+            name,
+            type,
+            color,
+            start: startDec,
+            originalStart: startDec,
+            duration,
+          });
       }
-      appData.todayBlocks.push(todayClone);
     } else {
-      const todayBlock = appData.todayBlocks.find(
-        (b) => b.id === editingBlockRef.block.id,
-      );
-      if (todayBlock) {
-        Object.assign(todayBlock, {
-          name,
-          type,
-          color,
-          start: startDec,
-          duration,
-        });
+      const newId = Math.random().toString(36).substr(2, 9);
+      const newBlock = {
+        id: newId,
+        name,
+        type,
+        color,
+        start: startDec,
+        originalStart: startDec,
+        duration,
+      };
+      appData.baseSchedule[d].push(newBlock);
+
+      if (isToday) {
+        const todayClone = JSON.parse(JSON.stringify(newBlock));
+        const nowDec =
+          new Date().getHours() +
+          new Date().getMinutes() / 60 +
+          new Date().getSeconds() / 3600;
+
+        todayClone.originalStart = todayClone.start;
+
+        if (nowDec >= todayClone.start + todayClone.duration) {
+          todayClone.status = "missed";
+        } else {
+          todayClone.status = "pending";
+        }
+        todayClone.notifiedStart = false;
+        todayClone.notifiedEnd = false;
+        appData.todayBlocks.push(todayClone);
       }
     }
+    cascadeBlocks(appData.baseSchedule[d]);
+  });
+
+  if (
+    selectedDays.includes(new Date().getDay()) ||
+    (!isCreatingNew &&
+      !selectedDays.includes(currentDayIdx) &&
+      currentDayIdx === new Date().getDay())
+  ) {
     cascadeBlocks(appData.todayBlocks);
   }
 
@@ -644,7 +853,6 @@ function deleteBlock() {
   const deletedId = editingBlockRef.block.id;
   appData.baseSchedule[currentDayIdx].splice(editingBlockRef.idx, 1);
 
-  // Remove apenas o bloco afetado no dia atual
   if (currentDayIdx === new Date().getDay()) {
     const todayIdx = appData.todayBlocks.findIndex((b) => b.id === deletedId);
     if (todayIdx !== -1) {
@@ -660,6 +868,61 @@ function deleteBlock() {
   saveData();
   closeModal("modal-edit-block");
   renderGrid();
+}
+
+async function clearSchedule() {
+  const confirmed = await showCustomConfirm(
+    "Zerar Agenda",
+    "Tem certeza que deseja apagar TODAS as atividades de TODOS os dias da semana? Essa ação não pode ser desfeita.",
+  );
+
+  if (confirmed) {
+    appData.baseSchedule = Array(7)
+      .fill(null)
+      .map(() => []);
+    appData.todayBlocks = [];
+    appData.pauseState = { isPaused: false, startTime: null, blockId: null };
+
+    saveData();
+    renderGrid();
+    updateTimer();
+  }
+}
+
+async function resetToday() {
+  const confirmed = await showCustomConfirm(
+    "Restaurar Hoje",
+    "Deseja cancelar o andamento atual e restaurar os horários originais da agenda para o dia de hoje?",
+  );
+
+  if (confirmed) {
+    const todayIdx = new Date().getDay();
+    appData.todayBlocks = JSON.parse(
+      JSON.stringify(appData.baseSchedule[todayIdx]),
+    );
+
+    const nowDec =
+      new Date().getHours() +
+      new Date().getMinutes() / 60 +
+      new Date().getSeconds() / 3600;
+
+    appData.todayBlocks.forEach((b) => {
+      b.originalStart = b.start;
+      if (nowDec >= b.start + b.duration) {
+        b.status = "missed";
+      } else {
+        b.status = "pending";
+      }
+      b.notifiedStart = false;
+      b.notifiedEnd = false;
+    });
+
+    appData.pauseState = { isPaused: false, startTime: null, blockId: null };
+
+    saveData();
+    updateTimer();
+    closeModal("modal-schedule");
+  }
 }
 
 // --- PERFIL E TEMA ---
@@ -705,16 +968,17 @@ function saveData() {
   localStorage.setItem("studyPlannerV5", JSON.stringify(appData));
 }
 
-renderProfile();
-updateTimer();
-
+// --- AUTO-PAUSE AO FECHAR O APP ---
 window.addEventListener("beforeunload", () => {
   const active = appData.todayBlocks.find((b) => b.status === "running");
 
-  if (active && !appData.pauseState.isPaused) {
+  if (active && active.type === "study" && !appData.pauseState.isPaused) {
     appData.pauseState.isPaused = true;
     appData.pauseState.startTime = Date.now();
     appData.pauseState.blockId = active.id;
     saveData();
   }
 });
+
+renderProfile();
+updateTimer();

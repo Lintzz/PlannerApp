@@ -20,3 +20,6 @@ yarn-error.log*
 # Ficheiros temporários e de cache
 .eslintcache
 .parcel-cache
+
+# Variáveis de ambiente
+.env

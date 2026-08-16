@@ -44,9 +44,23 @@
             </div>
           </div>
 
-          <button class="btn-close-app" onclick="closeApp()" title="Fechar App">
-            ✕
-          </button>
+          <div style="display: flex; gap: 5px">
+            <button
+              class="btn-close-app"
+              onclick="minimizeApp()"
+              title="Minimizar"
+              style="transform: translateY(-5px)"
+            >
+              _
+            </button>
+            <button
+              class="btn-close-app"
+              onclick="closeApp()"
+              title="Fechar App"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         <div class="status-area">
@@ -84,10 +98,7 @@
     </div>
 
     <div class="modal-overlay" id="modal-dashboard">
-      <div
-        class="modal-card"
-        style="height: 85vh; width: 95%; max-width: 500px"
-      >
+      <div class="modal-card">
         <div class="modal-header">
           <span class="modal-title">📊 Meu Desempenho</span>
           <button class="btn-close" onclick="closeModal('modal-dashboard')">
@@ -135,7 +146,7 @@
     </div>
 
     <div class="modal-overlay" id="modal-schedule">
-      <div class="modal-card" id="schedule-card" style="height: 80vh">
+      <div class="modal-card" id="schedule-card">
         <div class="modal-header">
           <span class="modal-title">Minha Agenda</span>
           <button class="btn-close" onclick="closeModal('modal-schedule')">
@@ -144,7 +155,24 @@
         </div>
         <div class="week-tabs" id="week-tabs"></div>
         <div class="schedule-area" id="schedule-grid"></div>
+
         <button class="btn-add-float" onclick="addNewBlock()">+</button>
+        <div style="display: flex; gap: 10px; margin-top: 10px">
+          <button
+            class="btn-danger"
+            onclick="resetToday()"
+            style="flex: 1; padding: 12px; font-size: 0.85rem; margin-top: 0"
+          >
+            ↺ Restaurar Hoje
+          </button>
+          <button
+            class="btn-danger"
+            onclick="clearSchedule()"
+            style="flex: 1; padding: 12px; font-size: 0.85rem; margin-top: 0"
+          >
+            🗑️ Limpar Tudo
+          </button>
+        </div>
       </div>
     </div>
 
@@ -157,30 +185,58 @@
           </button>
         </div>
         <div class="form-group">
-          <label class="form-label">Nome</label
-          ><input type="text" class="form-input" id="edit-name" />
+          <label class="form-label">Nome</label>
+          <input type="text" class="form-input" id="edit-name" />
         </div>
+
+        <div class="form-group">
+          <label class="form-label">Repetir nos dias</label>
+          <div class="days-selector">
+            <label class="day-checkbox"
+              ><input type="checkbox" value="0" /><span>D</span></label
+            >
+            <label class="day-checkbox"
+              ><input type="checkbox" value="1" /><span>S</span></label
+            >
+            <label class="day-checkbox"
+              ><input type="checkbox" value="2" /><span>T</span></label
+            >
+            <label class="day-checkbox"
+              ><input type="checkbox" value="3" /><span>Q</span></label
+            >
+            <label class="day-checkbox"
+              ><input type="checkbox" value="4" /><span>Q</span></label
+            >
+            <label class="day-checkbox"
+              ><input type="checkbox" value="5" /><span>S</span></label
+            >
+            <label class="day-checkbox"
+              ><input type="checkbox" value="6" /><span>S</span></label
+            >
+          </div>
+        </div>
+
         <div class="row-inputs">
           <div class="form-group" style="flex: 1">
-            <label class="form-label">Início</label
-            ><input type="time" class="form-input" id="edit-start" />
+            <label class="form-label">Início</label>
+            <input type="time" class="form-input" id="edit-start" />
           </div>
           <div class="form-group" style="flex: 1">
-            <label class="form-label">Fim</label
-            ><input type="time" class="form-input" id="edit-end" />
+            <label class="form-label">Fim</label>
+            <input type="time" class="form-input" id="edit-end" />
           </div>
         </div>
         <div class="row-inputs">
           <div class="form-group" style="flex: 2">
             <label class="form-label">Tipo</label>
             <select class="form-select" id="edit-type">
-              <option value="study">Foco / Estudo</option>
-              <option value="pause">Pausa / Almoço</option>
+              <option value="study">Foco</option>
+              <option value="pause">Pausa</option>
             </select>
           </div>
           <div class="form-group" style="flex: 1">
-            <label class="form-label">Cor</label
-            ><input type="color" class="form-color-picker" id="edit-color" />
+            <label class="form-label">Cor</label>
+            <input type="color" class="form-color-picker" id="edit-color" />
           </div>
         </div>
         <div
@@ -212,8 +268,8 @@
           </button>
         </div>
         <div class="form-group">
-          <label class="form-label">Seu Nome</label
-          ><input
+          <label class="form-label">Seu Nome</label>
+          <input
             type="text"
             class="form-input"
             id="profile-name-input"
@@ -221,8 +277,8 @@
           />
         </div>
         <div class="form-group">
-          <label class="form-label">URL da Foto (Link)</label
-          ><input
+          <label class="form-label">URL da Foto (Link)</label>
+          <input
             type="text"
             class="form-input"
             id="profile-img-input"
